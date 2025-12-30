@@ -1,0 +1,9 @@
+.DS_Store
+# Environment variables with secrets
+.env
+
+# Generated deployment files (all generated YAML goes in yaml/)
+yaml/
+
+# License files
+license.mattermost

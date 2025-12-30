@@ -1,0 +1,28 @@
+apiVersion: installation.mattermost.com/v1beta1
+kind: Mattermost
+metadata:
+  name: mattermost
+  namespace: mattermost
+spec:
+  size: ${MATTERMOST_SIZE}
+  ingress:
+    enabled: true
+    host: ${DOMAIN}
+  database:
+    external:
+      secret: mattermost-postgres
+  fileStore:
+    external:
+      url: minio.mattermost-minio.svc.cluster.local
+      bucket: mattermost
+      secret: mattermost-secret-minio
+${LICENSE_SECRET_LINE}
+  image: mattermost/mattermost-enterprise-edition
+  imagePullPolicy: IfNotPresent
+  mattermostEnv:
+  - name: MM_FILESETTINGS_AMAZONS3SSE
+    value: "false"
+  - name: MM_FILESETTINGS_AMAZONS3SSL
+    value: "false"
+${SERVICE_ENV_LINE}
+  version: ${MATTERMOST_VERSION}

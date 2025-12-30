@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: mattermost-gateway-svc
+  namespace: mattermost
+spec:
+  selector:
+    app: mattermost
+    installation.mattermost.com/installation: mattermost
+  ports:
+  - name: http
+    port: 8065
+    targetPort: 8065
+  type: ClusterIP

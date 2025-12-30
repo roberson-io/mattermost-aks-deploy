@@ -1,0 +1,27 @@
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: mattermost-gateway
+  namespace: mattermost
+  annotations:
+    alb.networking.azure.io/alb-id: ${ALB_ID}
+spec:
+  gatewayClassName: azure-alb-external
+  listeners:
+  - name: http-listener
+    protocol: HTTP
+    port: 80
+    allowedRoutes:
+      namespaces:
+        from: Same
+  - name: https-listener
+    protocol: HTTPS
+    port: 443
+    allowedRoutes:
+      namespaces:
+        from: Same
+    tls:
+      mode: Terminate
+      certificateRefs:
+      - name: mattermost-tls-cert
+        kind: Secret

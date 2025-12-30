@@ -1,0 +1,27 @@
+apiVersion: minio.min.io/v2
+kind: Tenant
+metadata:
+  name: minio-mattermost
+  namespace: mattermost-minio
+spec:
+  image: ${MINIO_IMAGE}
+  imagePullPolicy: IfNotPresent
+  configuration:
+    name: minio-credentials
+  pools:
+  - servers: 2
+    name: pool-0
+    volumesPerServer: 4
+    volumeClaimTemplate:
+      metadata:
+        name: data
+      spec:
+        accessModes:
+        - ReadWriteOnce
+        resources:
+          requests:
+            storage: 200Gi
+        storageClassName: azureblob-nfs-premium
+  requestAutoCert: false
+  mountPath: /export
+  subPath: /data
