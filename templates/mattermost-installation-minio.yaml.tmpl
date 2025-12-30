@@ -16,7 +16,7 @@ spec:
       url: minio.mattermost-minio.svc.cluster.local
       bucket: mattermost
       secret: mattermost-secret-minio
-${LICENSE_SECRET_LINE}
+  licenseSecret: mattermost-secret-license
   image: mattermost/mattermost-enterprise-edition
   imagePullPolicy: IfNotPresent
   mattermostEnv:
@@ -24,5 +24,6 @@ ${LICENSE_SECRET_LINE}
     value: "false"
   - name: MM_FILESETTINGS_AMAZONS3SSL
     value: "false"
-${SERVICE_ENV_LINE}
+  - name: MM_SERVICEENVIRONMENT
+    value: "${MM_SERVICEENVIRONMENT}"
   version: ${MATTERMOST_VERSION}

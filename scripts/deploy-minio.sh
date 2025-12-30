@@ -7,9 +7,6 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 TEMPLATES_DIR="$REPO_ROOT/templates"
 YAML_DIR="$REPO_ROOT/yaml"
 
-# Create yaml directory for generated files
-mkdir -p "$YAML_DIR"
-
 echo "=========================================="
 echo "Deploying Mattermost with MinIO Storage"
 echo "=========================================="
@@ -97,6 +94,23 @@ echo "  Location: $LOCATION"
 echo "  Domain: $DOMAIN"
 echo ""
 
+# Check if YAML directory exists and has required files
+# If not, generate them (allows script to run standalone)
+if [ ! -d "$YAML_DIR" ] || [ ! -f "$YAML_DIR/mattermost-installation-minio.yaml" ]; then
+    echo "YAML files not found. Generating from templates..."
+    if [ -x "$SCRIPT_DIR/generate-yaml.sh" ]; then
+        "$SCRIPT_DIR/generate-yaml.sh"
+    else
+        echo "ERROR: generate-yaml.sh not found or not executable"
+        exit 1
+    fi
+    echo ""
+else
+    echo "Using existing YAML files from $YAML_DIR"
+    echo "  (Run 'make yaml' or 'make clean && make yaml' to regenerate)"
+    echo ""
+fi
+
 # Create resource group if it doesn't exist
 echo "Checking resource group..."
 if ! az group show --name "$RESOURCE_GROUP" &>/dev/null; then
@@ -167,11 +181,11 @@ if ! az postgres flexible-server show --resource-group "$RESOURCE_GROUP" --name 
     done
     echo "PostgreSQL server is ready!"
 
-    echo "Creating mattermost database..."
+    echo "Creating $POSTGRES_DB database..."
     az postgres flexible-server db create \
         --resource-group "$RESOURCE_GROUP" \
         --server-name "$POSTGRES_SERVER" \
-        --database-name mattermost
+        --database-name "$POSTGRES_DB"
 else
     echo "PostgreSQL server already exists, skipping creation"
 fi
@@ -350,42 +364,41 @@ else
     echo "MinIO Operator already installed, skipping"
 fi
 
-# Create MinIO Tenant using templates
+# Deploy MinIO Tenant
 echo ""
-echo "Creating MinIO Tenant..."
-mkdir -p "$YAML_DIR/minio-tenant-kustomize"
+echo "Deploying MinIO Tenant..."
 
-# Copy static namespace file
-cp "$TEMPLATES_DIR/minio-tenant-kustomize/namespace.yaml" "$YAML_DIR/minio-tenant-kustomize/"
-
-# Generate files from templates using envsubst
-export MINIO_ADMIN_USER MINIO_ADMIN_PASSWORD MINIO_SERVICE_USER MINIO_SERVICE_PASSWORD MINIO_IMAGE
-envsubst < "$TEMPLATES_DIR/minio-tenant-kustomize/tenant-credentials-secret.yaml.tmpl" > "$YAML_DIR/minio-tenant-kustomize/tenant-credentials-secret.yaml"
-envsubst < "$TEMPLATES_DIR/minio-tenant-kustomize/mattermost-user-secret.yaml.tmpl" > "$YAML_DIR/minio-tenant-kustomize/mattermost-user-secret.yaml"
-envsubst < "$TEMPLATES_DIR/minio-tenant-kustomize/tenant.yaml.tmpl" > "$YAML_DIR/minio-tenant-kustomize/tenant.yaml"
-
-# Copy static kustomization file
-cp "$TEMPLATES_DIR/minio-tenant-kustomize/kustomization.yaml" "$YAML_DIR/minio-tenant-kustomize/"
-
-echo "Deploying MinIO tenant..."
-kubectl apply -k "$YAML_DIR/minio-tenant-kustomize/"
-
-echo "Waiting for MinIO tenant to be ready (this may take a few minutes)..."
-# Wait for the StatefulSet to be created by the operator
-echo "Waiting for MinIO StatefulSet to be created..."
-RETRY_COUNT=0
-MAX_RETRIES=60
-until kubectl get statefulset -n mattermost-minio -l v1.min.io/tenant=minio-mattermost -o name 2>/dev/null | grep -q statefulset; do
-    RETRY_COUNT=$((RETRY_COUNT + 1))
-    if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
-        echo "ERROR: MinIO StatefulSet was not created in time"
-        exit 1
+# Check if tenant already exists
+if kubectl get tenant minio-mattermost -n mattermost-minio &>/dev/null; then
+    echo "MinIO Tenant already exists, checking pod status..."
+    # Check if pods are ready
+    if kubectl wait --for=condition=ready pod -l v1.min.io/tenant=minio-mattermost -n mattermost-minio --timeout=10s &>/dev/null; then
+        echo "MinIO Tenant pods are already running and ready"
+    else
+        echo "MinIO Tenant exists but pods are not ready, waiting..."
+        kubectl wait --for=condition=ready pod -l v1.min.io/tenant=minio-mattermost -n mattermost-minio --timeout=600s
     fi
-    echo "Waiting for StatefulSet to be created (attempt $RETRY_COUNT/$MAX_RETRIES)..."
-    sleep 5
-done
-echo "StatefulSet created, waiting for pods to be ready..."
-kubectl wait --for=condition=ready pod -l v1.min.io/tenant=minio-mattermost -n mattermost-minio --timeout=600s
+else
+    echo "Creating MinIO Tenant..."
+    kubectl apply -k "$YAML_DIR/minio-tenant-kustomize/"
+
+    echo "Waiting for MinIO tenant to be ready (this may take a few minutes)..."
+    # Wait for the StatefulSet to be created by the operator
+    echo "Waiting for MinIO StatefulSet to be created..."
+    RETRY_COUNT=0
+    MAX_RETRIES=60
+    until kubectl get statefulset -n mattermost-minio -l v1.min.io/tenant=minio-mattermost -o name 2>/dev/null | grep -q statefulset; do
+        RETRY_COUNT=$((RETRY_COUNT + 1))
+        if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
+            echo "ERROR: MinIO StatefulSet was not created in time"
+            exit 1
+        fi
+        echo "Waiting for StatefulSet to be created (attempt $RETRY_COUNT/$MAX_RETRIES)..."
+        sleep 5
+    done
+    echo "StatefulSet created, waiting for pods to be ready..."
+    kubectl wait --for=condition=ready pod -l v1.min.io/tenant=minio-mattermost -n mattermost-minio --timeout=600s
+fi
 
 # Configure MinIO with mc
 echo ""
@@ -393,7 +406,20 @@ echo "Configuring MinIO tenant..."
 echo "Port-forwarding to MinIO service..."
 kubectl -n mattermost-minio port-forward svc/minio 9000:80 &
 PF_PID=$!
-sleep 5
+
+echo "Waiting for port-forward to be ready..."
+for i in {1..30}; do
+    if nc -z localhost 9000 2>/dev/null; then
+        echo "Port-forward established successfully"
+        break
+    fi
+    if [ $i -eq 30 ]; then
+        echo "ERROR: Port-forward failed to establish after 30 seconds"
+        kill $PF_PID 2>/dev/null || true
+        exit 1
+    fi
+    sleep 1
+done
 
 echo "Configuring mc client..."
 mc alias set minio-mattermost http://localhost:9000 "$MINIO_ADMIN_USER" "$MINIO_ADMIN_PASSWORD"
@@ -459,22 +485,24 @@ else
     echo "No license file provided, skipping license configuration"
 fi
 
-# Create Gateway API resources using templates
+# Create Gateway API resources
 echo ""
-echo "Creating Gateway API resources..."
+echo "Deploying Gateway API resources..."
 
-# Copy static gateway class
-cp "$TEMPLATES_DIR/gateway-class.yaml" "$YAML_DIR/gateway-class.yaml"
+# Apply Gateway class and cluster issuer (idempotent with kubectl apply)
 kubectl apply -f "$YAML_DIR/gateway-class.yaml"
-
-# Generate cluster issuer
-export EMAIL
-envsubst < "$TEMPLATES_DIR/cluster-issuer.yaml.tmpl" > "$YAML_DIR/cluster-issuer.yaml"
 kubectl apply -f "$YAML_DIR/cluster-issuer.yaml"
 
-# Generate gateway (HTTP only initially)
-envsubst < "$TEMPLATES_DIR/mattermost-gateway-http.yaml.tmpl" > "$YAML_DIR/mattermost-gateway.yaml"
-kubectl apply -f "$YAML_DIR/mattermost-gateway.yaml"
+# Check if Gateway exists
+if kubectl get gateway mattermost-gateway -n mattermost &>/dev/null; then
+    echo "Gateway already exists, checking status..."
+else
+    echo "Creating Gateway (HTTP only initially)..."
+    # Generate and apply gateway from HTTP template
+    export ALB_ID
+    envsubst < "$TEMPLATES_DIR/mattermost-gateway-http.yaml.tmpl" > "$YAML_DIR/mattermost-gateway.yaml"
+    kubectl apply -f "$YAML_DIR/mattermost-gateway.yaml"
+fi
 
 # Wait for Gateway to be Programmed
 echo "Waiting for Gateway to be Programmed..."
@@ -488,12 +516,9 @@ for i in {1..30}; do
     sleep 10
 done
 
-# Create ClusterIP service for Gateway routing
-echo "Creating ClusterIP service for Gateway routing..."
-cp "$TEMPLATES_DIR/mattermost-gateway-svc.yaml" "$YAML_DIR/mattermost-gateway-svc.yaml"
+# Create ClusterIP service and HTTPRoute (idempotent with kubectl apply)
+echo "Applying Gateway service and HTTPRoute..."
 kubectl apply -f "$YAML_DIR/mattermost-gateway-svc.yaml"
-
-# Generate HTTPRoute
 export DOMAIN
 envsubst < "$TEMPLATES_DIR/mattermost-httproute.yaml.tmpl" > "$YAML_DIR/mattermost-httproute.yaml"
 kubectl apply -f "$YAML_DIR/mattermost-httproute.yaml"
@@ -524,32 +549,90 @@ fi
 
 echo ""
 echo "=============================================="
-echo "  ACTION REQUIRED: Update DNS Record"
+echo "  DNS Configuration Required"
 echo "=============================================="
 echo ""
 echo "Gateway FQDN: $GATEWAY_FQDN"
 echo "Gateway IP:   $GATEWAY_IP"
 echo ""
-echo "Please create/update your DNS record:"
-echo "  $DOMAIN -> $GATEWAY_IP"
+echo "Configure DNS for your domain ($DOMAIN) using ONE of these options:"
 echo ""
-echo "The TLS certificate (Let's Encrypt) requires the domain"
-echo "to resolve to the Gateway IP for HTTP-01 validation."
+echo "Option 1 - CNAME Record:"
+echo "  Type: CNAME"
+echo "  Name: $DOMAIN"
+echo "  Value: $GATEWAY_FQDN"
 echo ""
-read -p "Press ENTER after you have updated DNS (or Ctrl+C to cancel)..."
+echo "Option 2 - A Record:"
+echo "  Type: A"
+echo "  Name: $DOMAIN"
+echo "  Value: $GATEWAY_IP"
+echo ""
+echo "Note: The TLS certificate (Let's Encrypt) requires the domain"
+echo "      to resolve to the Gateway IP for HTTP-01 validation."
+echo ""
+
+# Check if dig is available
+if ! command -v dig &> /dev/null; then
+    echo "WARNING: 'dig' command not found. Please install dnsutils (apt) or bind-tools (yum)"
+    echo "Continuing without DNS verification..."
+    read -p "Press ENTER after you have updated DNS (or Ctrl+C to cancel)..."
+else
+    # DNS Verification Loop
+    echo "Checking DNS propagation (using DNS server: ${DNS_SERVER:-8.8.8.8})..."
+    DNS_READY=false
+    for i in {1..30}; do
+        RESOLVED_IP=$(dig +short "$DOMAIN" @${DNS_SERVER:-8.8.8.8} | grep -E '^[0-9.]+$' | head -1)
+
+        if [ -n "$RESOLVED_IP" ] && [ "$RESOLVED_IP" = "$GATEWAY_IP" ]; then
+            echo "✓ DNS propagated successfully! $DOMAIN resolves to $GATEWAY_IP"
+            DNS_READY=true
+            break
+        fi
+
+        if [ -n "$RESOLVED_IP" ]; then
+            echo "DNS not yet propagated: $DOMAIN -> $RESOLVED_IP (expected $GATEWAY_IP) - attempt $i/30"
+        else
+            echo "DNS not yet configured: $DOMAIN has no DNS record - attempt $i/30"
+        fi
+
+        sleep 10
+    done
+
+    if [ "$DNS_READY" = false ]; then
+        echo ""
+        echo "WARNING: DNS did not propagate within 5 minutes"
+        echo "Please verify your DNS configuration and wait for propagation"
+        read -p "Press ENTER to continue anyway (or Ctrl+C to cancel)..."
+    fi
+fi
 
 # Create TLS Certificate for Gateway using template
 echo ""
 echo "Creating TLS certificate for Gateway..."
-if ! kubectl get certificate mattermost-tls-cert -n mattermost &>/dev/null; then
+
+# Check if certificate exists
+CERT_EXISTS=false
+if kubectl get certificate mattermost-tls-cert -n mattermost &>/dev/null; then
+    CERT_EXISTS=true
+    CERT_READY=$(kubectl get certificate mattermost-tls-cert -n mattermost -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null)
+    if [ "$CERT_READY" = "True" ]; then
+        echo "Certificate already exists and is ready"
+    else
+        echo "Certificate exists but is not ready, checking ACME challenge setup..."
+    fi
+else
+    echo "Creating certificate resource..."
     envsubst < "$TEMPLATES_DIR/mattermost-certificate.yaml.tmpl" | kubectl apply -f -
     echo "Certificate resource created"
+fi
 
+# If certificate is not ready, handle ACME challenge
+if [ "$CERT_EXISTS" = "false" ] || [ "$CERT_READY" != "True" ]; then
     # Wait for cert-manager to create the ACME solver service
     echo "Waiting for ACME solver service to be created..."
     SOLVER_SVC=""
     for i in {1..30}; do
-        SOLVER_SVC=$(kubectl get svc -n mattermost -l acme.cert-manager.io/http01-solver=true -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+        SOLVER_SVC=$(kubectl get svc -n mattermost -l acme.cert-manager.io/http01-solver=true -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
         if [ -n "$SOLVER_SVC" ]; then
             echo "Found ACME solver service: $SOLVER_SVC"
             break
@@ -574,15 +657,19 @@ if ! kubectl get certificate mattermost-tls-cert -n mattermost &>/dev/null; then
 
     # Clean up ACME HTTPRoute after certificate is issued
     kubectl delete httproute acme-challenge -n mattermost 2>/dev/null || true
-else
-    echo "Certificate already exists, skipping"
 fi
 
-# Add HTTPS listener to Gateway now that certificate exists
+# Verify TLS secret exists before adding HTTPS listener
 echo ""
-echo "Adding HTTPS listener to Gateway..."
-envsubst < "$TEMPLATES_DIR/mattermost-gateway-https.yaml.tmpl" > "$YAML_DIR/mattermost-gateway.yaml"
-kubectl apply -f "$YAML_DIR/mattermost-gateway.yaml"
+echo "Verifying TLS secret exists..."
+if kubectl get secret mattermost-tls-cert -n mattermost &>/dev/null; then
+    echo "TLS secret exists, adding HTTPS listener to Gateway..."
+    envsubst < "$TEMPLATES_DIR/mattermost-gateway-https.yaml.tmpl" > "$YAML_DIR/mattermost-gateway.yaml"
+    kubectl apply -f "$YAML_DIR/mattermost-gateway.yaml"
+else
+    echo "WARNING: TLS secret does not exist yet. Keeping Gateway with HTTP-only."
+    echo "Run the script again after certificate is issued to add HTTPS."
+fi
 
 # Wait for Gateway to be Programmed with HTTPS
 echo "Waiting for Gateway to be Programmed with HTTPS..."
@@ -596,43 +683,64 @@ for i in {1..30}; do
     sleep 10
 done
 
-# Deploy Mattermost using template
+# Deploy Mattermost
 echo ""
 echo "Deploying Mattermost..."
 
-# Build license configuration
-if [ -n "$LICENSE_FILE" ] && [ -f "$LICENSE_FILE" ]; then
-    export LICENSE_SECRET_LINE="  licenseSecret: mattermost-secret-license"
-    export SERVICE_ENV_LINE="  - name: MM_SERVICEENVIRONMENT
-    value: \"test\""
-else
-    export LICENSE_SECRET_LINE=""
-    export SERVICE_ENV_LINE=""
-fi
+# Check if Mattermost installation already exists
+if kubectl get mm mattermost -n mattermost &>/dev/null; then
+    echo "Mattermost installation already exists, checking pod status..."
+    # Check if pods are ready
+    if kubectl get pods -n mattermost -l app=mattermost -o name 2>/dev/null | grep -q pod; then
+        if kubectl wait --for=condition=ready pod -l app=mattermost -n mattermost --timeout=10s &>/dev/null; then
+            echo "Mattermost pods are already running and ready"
+        else
+            echo "Mattermost pods exist but are not ready, waiting..."
+            kubectl wait --for=condition=ready pod -l app=mattermost -n mattermost --timeout=600s || true
+        fi
+    else
+        echo "Mattermost resource exists but pods not yet created, waiting..."
+        # Wait for pods to exist first
+        RETRY_COUNT=0
+        MAX_RETRIES=60
+        until kubectl get pods -n mattermost -l app=mattermost -o name 2>/dev/null | grep -q pod; do
+            RETRY_COUNT=$((RETRY_COUNT + 1))
+            if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
+                echo "WARNING: Mattermost pods not created in time"
+                break
+            fi
+            echo "Waiting for pods to be created (attempt $RETRY_COUNT/$MAX_RETRIES)..."
+            sleep 5
+        done
 
-# Generate Mattermost installation
-export MATTERMOST_SIZE MATTERMOST_VERSION
-envsubst < "$TEMPLATES_DIR/mattermost-installation-minio.yaml.tmpl" > "$YAML_DIR/mattermost-installation-minio.yaml"
-kubectl apply -f "$YAML_DIR/mattermost-installation-minio.yaml"
-
-echo ""
-echo "Waiting for Mattermost pods to be created..."
-# Wait for pods to exist first
-RETRY_COUNT=0
-MAX_RETRIES=60
-until kubectl get pods -n mattermost -l app=mattermost -o name 2>/dev/null | grep -q pod; do
-    RETRY_COUNT=$((RETRY_COUNT + 1))
-    if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
-        echo "WARNING: Mattermost pods not created in time"
-        break
+        if kubectl get pods -n mattermost -l app=mattermost -o name 2>/dev/null | grep -q pod; then
+            echo "Waiting for Mattermost pods to be ready..."
+            kubectl wait --for=condition=ready pod -l app=mattermost -n mattermost --timeout=600s || true
+        fi
     fi
-    echo "Waiting for pods to be created (attempt $RETRY_COUNT/$MAX_RETRIES)..."
-    sleep 5
-done
+else
+    echo "Creating Mattermost installation..."
+    kubectl apply -f "$YAML_DIR/mattermost-installation-minio.yaml"
 
-if kubectl get pods -n mattermost -l app=mattermost -o name 2>/dev/null | grep -q pod; then
-    echo "Waiting for Mattermost pods to be ready (this may take several minutes)..."
-    kubectl wait --for=condition=ready pod -l app=mattermost -n mattermost --timeout=600s || true
+    echo ""
+    echo "Waiting for Mattermost pods to be created..."
+    # Wait for pods to exist first
+    RETRY_COUNT=0
+    MAX_RETRIES=60
+    until kubectl get pods -n mattermost -l app=mattermost -o name 2>/dev/null | grep -q pod; do
+        RETRY_COUNT=$((RETRY_COUNT + 1))
+        if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
+            echo "WARNING: Mattermost pods not created in time"
+            break
+        fi
+        echo "Waiting for pods to be created (attempt $RETRY_COUNT/$MAX_RETRIES)..."
+        sleep 5
+    done
+
+    if kubectl get pods -n mattermost -l app=mattermost -o name 2>/dev/null | grep -q pod; then
+        echo "Waiting for Mattermost pods to be ready (this may take several minutes)..."
+        kubectl wait --for=condition=ready pod -l app=mattermost -n mattermost --timeout=600s || true
+    fi
 fi
 
 echo ""

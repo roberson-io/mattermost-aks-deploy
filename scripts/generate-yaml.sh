@@ -36,11 +36,14 @@ echo "Generating Gateway API resources..."
 # Gateway Class (static file)
 cp "$TEMPLATES_DIR/gateway-class.yaml" "$YAML_DIR/gateway-class.yaml"
 
+# Gateway Service (static file)
+cp "$TEMPLATES_DIR/mattermost-gateway-svc.yaml" "$YAML_DIR/mattermost-gateway-svc.yaml"
+
 # Cluster Issuer (requires EMAIL)
 export EMAIL
 envsubst < "$TEMPLATES_DIR/cluster-issuer.yaml.tmpl" > "$YAML_DIR/cluster-issuer.yaml"
 
-echo "  ✓ Gateway class and cluster issuer created"
+echo "  ✓ Gateway class, gateway service, and cluster issuer created"
 
 # ====================================================================================
 # MinIO Tenant Kustomize Resources
@@ -84,9 +87,10 @@ echo "Generating Mattermost secrets..."
 
 # PostgreSQL secret
 export POSTGRES_SERVER
+export POSTGRES_DB
 export POSTGRES_ADMIN_USER
 export POSTGRES_PASSWORD
-export CONNECTION_STRING="postgres://${POSTGRES_ADMIN_USER}:${POSTGRES_PASSWORD}@${POSTGRES_SERVER}.postgres.database.azure.com:5432/mattermost?sslmode=require&connect_timeout=10"
+export CONNECTION_STRING="postgres://${POSTGRES_ADMIN_USER}:${POSTGRES_PASSWORD}@${POSTGRES_SERVER}.postgres.database.azure.com:5432/${POSTGRES_DB}?sslmode=require&connect_timeout=10"
 export CONNECTION_STRING_BASE64=$(echo -n "$CONNECTION_STRING" | base64)
 envsubst < "$TEMPLATES_DIR/mattermost-secret-postgres.yaml.tmpl" > "$YAML_DIR/mattermost-secret-postgres.yaml"
 
@@ -108,15 +112,10 @@ fi
 
 echo "Generating Mattermost installation manifests..."
 
-# Set MM_SERVICEENVIRONMENT based on license file
-if [ -n "$LICENSE_FILE" ] && [ -f "$LICENSE_FILE" ]; then
-    export MM_SERVICEENVIRONMENT="test"
-else
-    export MM_SERVICEENVIRONMENT="production"
-fi
-
+export DOMAIN
 export MATTERMOST_VERSION
 export MATTERMOST_SIZE
+export MM_SERVICEENVIRONMENT
 export MINIO_SERVICE_USER  # Already exported above
 envsubst < "$TEMPLATES_DIR/mattermost-installation-minio.yaml.tmpl" > "$YAML_DIR/mattermost-installation-minio.yaml"
 

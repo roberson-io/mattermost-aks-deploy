@@ -15,8 +15,10 @@ help: ## Show this help message
 	@echo 'Getting Started:'
 	@echo '  1. Create .env with secrets:        make env'
 	@echo '  2. Edit .env and set DOMAIN/EMAIL'
-	@echo '  3. Generate YAML (optional):        make yaml'
-	@echo '  4. Deploy:                          make deploy-minio'
+	@echo '  3. Deploy:                          make deploy-minio'
+	@echo ''
+	@echo 'Note: make deploy-minio automatically generates YAML files'
+	@echo '      You can run "make yaml" separately to inspect generated files'
 	@echo ''
 	@echo 'Configuration is loaded from .env file'
 	@echo 'See example.env for all available options'
@@ -53,7 +55,7 @@ yaml: ## Generate all YAML files from templates (requires .env)
 	@./scripts/generate-yaml.sh
 	@echo "YAML files generated in yaml/ directory"
 
-deploy-minio: ## Deploy Mattermost with MinIO storage (creates cluster, PostgreSQL, etc.)
+deploy-minio: yaml ## Deploy Mattermost with MinIO storage (creates cluster, PostgreSQL, etc.)
 	@echo "=========================================="
 	@echo "Deploying Mattermost with MinIO Storage"
 	@echo "=========================================="
