@@ -155,12 +155,7 @@ provision_tls_certificate "$YAML_DIR" "$TEMPLATES_DIR"
 # Deploy Mattermost
 echo ""
 echo "Deploying Mattermost..."
-if kubectl get mattermost mattermost -n mattermost &>/dev/null; then
-    echo "Mattermost already exists, updating..."
-    kubectl apply -f "$YAML_DIR/mattermost-installation-minio.yaml"
-else
-    kubectl apply -f "$YAML_DIR/mattermost-installation-minio.yaml"
-fi
+kubectl apply -f "$YAML_DIR/mattermost-installation-minio.yaml"
 
 echo ""
 echo "Waiting for Mattermost pods to be ready (this may take several minutes)..."

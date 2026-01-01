@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ${NFS_PVC_NAME}
+  namespace: mattermost
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: ${NFS_STORAGE_CLASS}
+  resources:
+    requests:
+      storage: ${NFS_STORAGE_SIZE}

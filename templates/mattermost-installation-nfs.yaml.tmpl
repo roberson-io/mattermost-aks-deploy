@@ -1,0 +1,26 @@
+apiVersion: installation.mattermost.com/v1beta1
+kind: Mattermost
+metadata:
+  name: mattermost
+  namespace: mattermost
+spec:
+  size: ${MATTERMOST_SIZE}
+  ingress:
+    enabled: true
+    host: ${DOMAIN}
+  database:
+    external:
+      secret: mattermost-postgres
+  fileStore:
+    externalVolume:
+      volumeClaimName: ${NFS_PVC_NAME}
+  licenseSecret: mattermost-secret-license
+  image: mattermost/mattermost-enterprise-edition
+  imagePullPolicy: IfNotPresent
+  mattermostEnv:
+  - name: MM_SERVICEENVIRONMENT
+    value: "${MM_SERVICEENVIRONMENT}"
+  version: ${MATTERMOST_VERSION}
+  podTemplate:
+    securityContext:
+      fsGroup: 2000

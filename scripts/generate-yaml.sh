@@ -122,7 +122,19 @@ export MM_FILESETTINGS_AMAZONS3TRACE
 export MINIO_SERVICE_USER  # Already exported above
 envsubst < "$TEMPLATES_DIR/mattermost-installation-minio.yaml.tmpl" > "$YAML_DIR/mattermost-installation-minio.yaml"
 
-echo "  ✓ Mattermost installation manifest created"
+# NFS installation manifest
+export NFS_PVC_NAME
+envsubst < "$TEMPLATES_DIR/mattermost-installation-nfs.yaml.tmpl" > "$YAML_DIR/mattermost-installation-nfs.yaml"
+
+# NFS storage resources
+NFS_STORAGE_DIR="$YAML_DIR/nfs-storage"
+mkdir -p "$NFS_STORAGE_DIR"
+export NFS_STORAGE_CLASS NFS_STORAGE_SIZE
+envsubst < "$TEMPLATES_DIR/nfs-storage-class.yaml.tmpl" > "$NFS_STORAGE_DIR/storage-class.yaml"
+envsubst < "$TEMPLATES_DIR/nfs-pvc.yaml.tmpl" > "$NFS_STORAGE_DIR/pvc.yaml"
+
+echo "  ✓ Mattermost installation manifests created"
+echo "  ✓ NFS storage resources created"
 
 echo ""
 echo "=============================================="

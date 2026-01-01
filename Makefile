@@ -66,7 +66,7 @@ deploy-minio: yaml ## Deploy Mattermost with MinIO storage (creates cluster, Pos
 	@chmod +x scripts/deploy-minio.sh
 	@./scripts/deploy-minio.sh
 	@echo ""
-	@echo "Deployment complete! Check PLAN.md for next steps."
+	@echo "Deployment complete!"
 
 deploy-nfs: ## Deploy Mattermost with NFS storage (requires cluster to exist)
 	@echo "=========================================="
@@ -75,7 +75,7 @@ deploy-nfs: ## Deploy Mattermost with NFS storage (requires cluster to exist)
 	@chmod +x scripts/deploy-nfs.sh
 	@./scripts/deploy-nfs.sh
 	@echo ""
-	@echo "Deployment complete! Check PLAN.md for comparison notes."
+	@echo "Deployment complete!"
 
 deploy-s3proxy: ## Deploy Mattermost with s3proxy + Azure Blob storage (requires cluster to exist)
 	@echo "=========================================="
@@ -84,7 +84,7 @@ deploy-s3proxy: ## Deploy Mattermost with s3proxy + Azure Blob storage (requires
 	@chmod +x scripts/deploy-s3proxy.sh
 	@./scripts/deploy-s3proxy.sh
 	@echo ""
-	@echo "Deployment complete! Check PLAN.md for comparison notes."
+	@echo "Deployment complete!"
 
 teardown: ## Delete the entire AKS cluster and all resources
 	@if [ ! -f .env ]; then \

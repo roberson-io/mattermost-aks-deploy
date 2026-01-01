@@ -1,0 +1,20 @@
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: ${NFS_STORAGE_CLASS}
+provisioner: file.csi.azure.com
+parameters:
+  protocol: nfs
+  skuName: Premium_LRS
+volumeBindingMode: Immediate
+allowVolumeExpansion: true
+mountOptions:
+  - nconnect=8
+  - hard
+  - noatime
+  - nodiratime
+  - rsize=1048576
+  - wsize=1048576
+  - timeo=600
+  - retrans=2
+  - actimeo=30
