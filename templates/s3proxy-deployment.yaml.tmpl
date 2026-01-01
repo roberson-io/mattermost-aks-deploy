@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: s3proxy
+  namespace: ${S3PROXY_NAMESPACE}
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: s3proxy
+  template:
+    metadata:
+      labels:
+        app: s3proxy
+    spec:
+      containers:
+      - name: s3proxy
+        image: ${S3PROXY_IMAGE}
+        ports:
+        - containerPort: 8080
+          name: http
+        env:
+        - name: S3PROXY_AUTHORIZATION
+          value: "aws-v2-or-v4"
+        - name: S3PROXY_IDENTITY
+          valueFrom:
+            secretKeyRef:
+              name: s3proxy-credentials
+              key: access-key
+        - name: S3PROXY_CREDENTIAL
+          valueFrom:
+            secretKeyRef:
+              name: s3proxy-credentials
+              key: secret-key
+        - name: JCLOUDS_PROVIDER
+          value: "azureblob-sdk"
+        - name: JCLOUDS_IDENTITY
+          valueFrom:
+            secretKeyRef:
+              name: azure-storage-credentials
+              key: account-name
+        - name: JCLOUDS_CREDENTIAL
+          valueFrom:
+            secretKeyRef:
+              name: azure-storage-credentials
+              key: account-key
+        - name: JCLOUDS_ENDPOINT
+          value: "https://${S3PROXY_STORAGE_ACCOUNT}.blob.core.windows.net"
+        - name: S3PROXY_ENDPOINT
+          value: "http://0.0.0.0:8080"
+        resources:
+          requests:
+            cpu: 250m
+            memory: 512Mi
+          limits:
+            cpu: "1"
+            memory: 1Gi
+        readinessProbe:
+          tcpSocket:
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 5

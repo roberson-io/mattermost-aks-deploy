@@ -133,8 +133,24 @@ export NFS_STORAGE_CLASS NFS_STORAGE_SIZE
 envsubst < "$TEMPLATES_DIR/nfs-storage-class.yaml.tmpl" > "$NFS_STORAGE_DIR/storage-class.yaml"
 envsubst < "$TEMPLATES_DIR/nfs-pvc.yaml.tmpl" > "$NFS_STORAGE_DIR/pvc.yaml"
 
+# S3Proxy installation manifest
+export S3PROXY_NAMESPACE S3PROXY_CONTAINER
+envsubst < "$TEMPLATES_DIR/mattermost-installation-s3proxy.yaml.tmpl" > "$YAML_DIR/mattermost-installation-s3proxy.yaml"
+
+# S3Proxy resources
+S3PROXY_DIR="$YAML_DIR/s3proxy"
+mkdir -p "$S3PROXY_DIR"
+export S3PROXY_IMAGE S3PROXY_STORAGE_ACCOUNT
+export S3PROXY_ACCESS_KEY_BASE64=$(echo -n "$S3PROXY_ACCESS_KEY" | base64)
+export S3PROXY_SECRET_KEY_BASE64=$(echo -n "$S3PROXY_SECRET_KEY" | base64)
+envsubst < "$TEMPLATES_DIR/s3proxy-deployment.yaml.tmpl" > "$S3PROXY_DIR/deployment.yaml"
+envsubst < "$TEMPLATES_DIR/s3proxy-service.yaml.tmpl" > "$S3PROXY_DIR/service.yaml"
+envsubst < "$TEMPLATES_DIR/s3proxy-secret-credentials.yaml.tmpl" > "$S3PROXY_DIR/secret-credentials.yaml"
+envsubst < "$TEMPLATES_DIR/mattermost-secret-s3proxy.yaml.tmpl" > "$YAML_DIR/mattermost-secret-s3proxy.yaml"
+
 echo "  ✓ Mattermost installation manifests created"
 echo "  ✓ NFS storage resources created"
+echo "  ✓ S3Proxy resources created"
 
 echo ""
 echo "=============================================="
