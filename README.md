@@ -52,8 +52,8 @@ All configuration is managed via `.env` file:
 ### Deployment
 
 - `make deploy-minio` - Deploy complete stack with MinIO storage
-- `make deploy-nfs` - Deploy with NFS storage (not implemented yet)
-- `make deploy-s3proxy` - Deploy with s3proxy + Azure Blob Storage (not implemented yet)
+- `make deploy-nfs` - Deploy with NFS storage
+- `make deploy-s3proxy` - Deploy with s3proxy + Azure Blob Storage
 
 ### Management
 
