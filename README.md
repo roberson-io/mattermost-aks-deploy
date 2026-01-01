@@ -12,15 +12,18 @@ Automated deployment scripts for running Mattermost on Azure Kubernetes Service 
 ## Quick Start
 
 ```bash
-# 1. Save your Mattermost license key in a file named license.mattermost
+# 1. Log in to Azure
+az login
 
-# 2. Create configuration file with secure passwords
+# 2. Save your Mattermost license key in a file named license.mattermost
+
+# 3. Create configuration file with secure passwords
 make env
 
-# 3. Edit .env to set your domain and email and modify default settings
+# 4. Edit .env to set your domain and email and modify default settings
 vim .env
 
-# 4. Deploy with MinIO storage
+# 5. Deploy with MinIO storage
 # The script will prompt to create a DNS CNAME or A record when the gateway FQDN and IP address are available
 make deploy-minio
 ```

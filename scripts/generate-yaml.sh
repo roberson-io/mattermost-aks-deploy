@@ -116,6 +116,9 @@ export DOMAIN
 export MATTERMOST_VERSION
 export MATTERMOST_SIZE
 export MM_SERVICEENVIRONMENT
+export MM_FILESETTINGS_AMAZONS3SSL
+export MM_FILESETTINGS_AMAZONS3SSE
+export MM_FILESETTINGS_AMAZONS3TRACE
 export MINIO_SERVICE_USER  # Already exported above
 envsubst < "$TEMPLATES_DIR/mattermost-installation-minio.yaml.tmpl" > "$YAML_DIR/mattermost-installation-minio.yaml"
 

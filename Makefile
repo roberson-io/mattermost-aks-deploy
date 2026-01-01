@@ -179,3 +179,74 @@ logs-s3proxy: ## Show s3proxy logs
 
 gateway-ip: ## Get the Gateway external IP address
 	@kubectl get gateway mattermost-gateway -n mattermost -o jsonpath='{.status.addresses[0].value}' 2>/dev/null && echo "" || echo "Gateway not ready yet"
+
+trivy-config: ## Scan YAML configurations for security issues
+	@echo "=== Scanning YAML configurations ==="
+	@if [ ! -d yaml/ ]; then \
+		echo "ERROR: yaml/ directory not found. Run 'make yaml' first."; \
+		exit 1; \
+	fi
+	@trivy config --severity HIGH,CRITICAL yaml/
+
+trivy-images: ## Scan container images for vulnerabilities
+	@echo "=== Scanning container images ==="
+	@if [ ! -f .env ]; then \
+		echo "ERROR: .env file not found. Run 'make env' first."; \
+		exit 1; \
+	fi
+	@echo "Scanning Chainguard MinIO image..."
+	@trivy image --severity HIGH,CRITICAL $(MINIO_IMAGE)
+	@echo ""
+	@echo "Scanning Mattermost image..."
+	@trivy image --severity HIGH,CRITICAL mattermost/mattermost-enterprise-edition:$(MATTERMOST_VERSION)
+	@echo ""
+	@echo "Scanning MinIO Operator..."
+	@trivy image --severity HIGH,CRITICAL minio/operator:$(MINIO_OPERATOR_VERSION)
+
+trivy-cluster: ## Scan live Kubernetes cluster for security issues
+	@echo "=== Scanning live Kubernetes cluster ==="
+	@if ! kubectl cluster-info &>/dev/null; then \
+		echo "ERROR: Cannot connect to Kubernetes cluster"; \
+		exit 1; \
+	fi
+	@echo "Scanning mattermost namespace..."
+	@trivy k8s --include-namespaces mattermost --report summary || echo "Namespace not found or no resources"
+	@echo ""
+	@echo "Scanning mattermost-minio namespace..."
+	@trivy k8s --include-namespaces mattermost-minio --report summary || echo "Namespace not found or no resources"
+	@echo ""
+	@echo "Scanning minio-operator namespace..."
+	@trivy k8s --include-namespaces minio-operator --report summary || echo "Namespace not found or no resources"
+
+trivy-report: ## Generate comprehensive security reports in JSON format
+	@echo "=== Generating comprehensive security reports ==="
+	@if [ ! -f .env ]; then \
+		echo "ERROR: .env file not found. Run 'make env' first."; \
+		exit 1; \
+	fi
+	@if [ ! -d yaml/ ]; then \
+		echo "ERROR: yaml/ directory not found. Run 'make yaml' first."; \
+		exit 1; \
+	fi
+	@mkdir -p reports
+	@echo "Generating config scan report..."
+	@trivy config --format json --output reports/config-scan.json yaml/
+	@echo "Generating MinIO image scan report..."
+	@trivy image --format json --output reports/minio-image-scan.json $(MINIO_IMAGE)
+	@echo "Generating Mattermost image scan report..."
+	@trivy image --format json --output reports/mattermost-image-scan.json mattermost/mattermost-enterprise-edition:$(MATTERMOST_VERSION)
+	@if kubectl cluster-info &>/dev/null; then \
+		echo "Generating cluster scan reports..."; \
+		trivy k8s --include-namespaces mattermost --format json --output reports/cluster-mattermost-scan.json 2>/dev/null || echo "  Mattermost namespace not found"; \
+		trivy k8s --include-namespaces mattermost-minio --format json --output reports/cluster-minio-scan.json 2>/dev/null || echo "  MinIO namespace not found"; \
+		trivy k8s --include-namespaces minio-operator --format json --output reports/cluster-operator-scan.json 2>/dev/null || echo "  MinIO operator namespace not found"; \
+	else \
+		echo "Skipping cluster scans (not connected to cluster)"; \
+	fi
+	@echo ""
+	@echo "Reports saved to reports/ directory:"
+	@ls -lh reports/
+
+trivy-full: trivy-config trivy-images trivy-cluster ## Run all Trivy security scans
+	@echo ""
+	@echo "=== Full security scan complete ==="

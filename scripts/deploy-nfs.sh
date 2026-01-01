@@ -1,77 +1,65 @@
 #!/bin/bash
 set -e
 
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+TEMPLATES_DIR="$REPO_ROOT/templates"
+YAML_DIR="$REPO_ROOT/yaml"
+
+# Source common functions
+source "$SCRIPT_DIR/common.sh"
+
 echo "=========================================="
 echo "Deploying Mattermost with NFS Storage"
 echo "=========================================="
 
-# Load environment variables from .env file
-if [ ! -f .env ]; then
-    echo "ERROR: .env file not found!"
+# Load and validate configuration
+load_and_validate_config "$SCRIPT_DIR"
+
+# Check if YAML directory exists and has required files
+# If not, generate them (allows script to run standalone)
+if [ ! -d "$YAML_DIR" ] || [ ! -f "$YAML_DIR/mattermost-installation-nfs.yaml" ]; then
+    echo "YAML files not found. Generating from templates..."
+    if [ -x "$SCRIPT_DIR/generate-yaml.sh" ]; then
+        "$SCRIPT_DIR/generate-yaml.sh"
+    else
+        print_error "generate-yaml.sh not found or not executable"
+        exit 1
+    fi
     echo ""
-    echo "Please create a .env file with your configuration:"
-    echo "  Run: make env"
-    echo "  Then edit .env and update DOMAIN and EMAIL"
+else
+    echo "Using existing YAML files from $YAML_DIR"
+    echo "  (Run 'make yaml' or 'make clean && make yaml' to regenerate)"
     echo ""
-    exit 1
 fi
 
-echo "Loading configuration from .env file..."
-source .env
-
-# Set defaults for optional variables
-RESOURCE_GROUP="${RESOURCE_GROUP:-mattermost-test-rg}"
-CLUSTER_NAME="${CLUSTER_NAME:-mattermost-test-aks}"
-LOCATION="${LOCATION:-eastus}"
-POSTGRES_SERVER="${POSTGRES_SERVER:-mattermost-postgres}"
-DOMAIN="${DOMAIN:-mattermost.example.com}"
-EMAIL="${EMAIL:-admin@example.com}"
-
-# Validate required secrets
-if [[ "$POSTGRES_PASSWORD" == *"CHANGE_ME"* ]]; then
-    echo "ERROR: Placeholder password detected in .env file!"
-    echo ""
-    echo "Please generate secure secrets by running:"
-    echo "  make env"
-    echo ""
-    exit 1
+# Ensure resource group exists
+echo "Ensuring resource group exists..."
+if ! az group show --name "$RESOURCE_GROUP" &>/dev/null; then
+    echo "Creating resource group: $RESOURCE_GROUP in $LOCATION"
+    az group create --name "$RESOURCE_GROUP" --location "$LOCATION"
 fi
 
-echo "Using configuration:"
-echo "  Resource Group: $RESOURCE_GROUP"
-echo "  Cluster Name: $CLUSTER_NAME"
-echo "  Location: $LOCATION"
-echo "  Domain: $DOMAIN"
+# Create AKS cluster
+create_aks_cluster
+
+# Create PostgreSQL database
+create_postgresql
+
+# Install cert-manager
+install_cert_manager
+
+# Install ALB Controller
+install_alb_controller
+
+# Create NFS storage resources
 echo ""
-
-# Step 1: Ensure AKS cluster exists
-echo "Step 1: Checking AKS cluster..."
-if ! az aks show --resource-group "$RESOURCE_GROUP" --name "$CLUSTER_NAME" &>/dev/null; then
-    echo "ERROR: AKS cluster does not exist. Run 'make deploy-minio' first to create the cluster."
-    exit 1
-fi
-
-az aks get-credentials --resource-group "$RESOURCE_GROUP" --name "$CLUSTER_NAME" --admin --overwrite-existing
-
-# Step 2: Ensure PostgreSQL exists
-echo ""
-echo "Step 2: Checking PostgreSQL database..."
-if ! az postgres flexible-server show --resource-group "$RESOURCE_GROUP" --name "$POSTGRES_SERVER" &>/dev/null; then
-    echo "ERROR: PostgreSQL server does not exist. Run 'make deploy-minio' first."
-    exit 1
-fi
-
-POSTGRES_HOST=$(az postgres flexible-server show --resource-group "$RESOURCE_GROUP" --name "$POSTGRES_SERVER" --query "fullyQualifiedDomainName" -o tsv)
-CONNECTION_STRING="postgres://mmuser:$POSTGRES_PASSWORD@$POSTGRES_HOST/mattermost?sslmode=require"
-CONNECTION_STRING_BASE64=$(echo -n "$CONNECTION_STRING" | base64)
-
-# Step 3: Create NFS storage resources
-echo ""
-echo "Step 3: Creating NFS storage resources..."
-mkdir -p nfs-storage
+echo "Creating NFS storage resources..."
+mkdir -p "$REPO_ROOT/nfs-storage"
 
 # Create storage class
-cat > nfs-storage/storage-class.yaml <<EOF
+cat > "$REPO_ROOT/nfs-storage/storage-class.yaml" <<EOF
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
@@ -89,8 +77,11 @@ mountOptions:
   - noatime
 EOF
 
+# Create namespace
+kubectl create namespace mattermost --dry-run=client -o yaml | kubectl apply -f -
+
 # Create PVC
-cat > nfs-storage/mattermost-nfs-pvc.yaml <<EOF
+cat > "$REPO_ROOT/nfs-storage/mattermost-nfs-pvc.yaml" <<EOF
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -106,150 +97,58 @@ spec:
 EOF
 
 echo "Applying NFS storage resources..."
-kubectl apply -f nfs-storage/storage-class.yaml
-kubectl create namespace mattermost --dry-run=client -o yaml | kubectl apply -f -
-kubectl apply -f nfs-storage/mattermost-nfs-pvc.yaml
+kubectl apply -f "$REPO_ROOT/nfs-storage/storage-class.yaml"
+kubectl apply -f "$REPO_ROOT/nfs-storage/mattermost-nfs-pvc.yaml"
 
 echo "Waiting for PVC to be bound..."
-kubectl wait --for=jsonpath='{.status.phase}'=Bound pvc/mattermost-files -n mattermost --timeout=300s
+kubectl wait --for=jsonpath='{.status.phase}'=Bound pvc/mattermost-files -n mattermost --timeout=300s || echo "PVC binding taking longer than expected"
 
-# Step 4: Create Mattermost secrets
+print_success "NFS storage resources created"
+
+# Install Mattermost Operator
+install_mattermost_operator
+
+# Create Mattermost secrets
 echo ""
-echo "Step 4: Creating Mattermost secrets..."
+echo "Creating Mattermost secrets..."
 
-# Create postgres secret
-cat > mattermost-secret-postgres.yaml <<EOF
-apiVersion: v1
-data:
-  DB_CONNECTION_CHECK_URL: $CONNECTION_STRING_BASE64
-  DB_CONNECTION_STRING: $CONNECTION_STRING_BASE64
-kind: Secret
-metadata:
-  name: mattermost-postgres
-  namespace: mattermost
-type: Opaque
-EOF
-kubectl apply -f mattermost-secret-postgres.yaml
-
-# Step 5: Ensure Gateway API resources exist
-echo ""
-echo "Step 5: Checking Gateway API resources..."
-if ! kubectl get gateway mattermost-gateway -n mattermost &>/dev/null; then
-    echo "Gateway not found, creating..."
-
-    # Gateway Class
-    cat > gateway-class.yaml <<EOF
-apiVersion: gateway.networking.k8s.io/v1
-kind: GatewayClass
-metadata:
-  name: azure-alb-external
-spec:
-  controllerName: alb.networking.azure.io/alb-controller
-EOF
-    kubectl apply -f gateway-class.yaml
-
-    # Cluster Issuer
-    cat > cluster-issuer.yaml <<EOF
-apiVersion: cert-manager.io/v1
-kind: ClusterIssuer
-metadata:
-  name: letsencrypt-prod
-spec:
-  acme:
-    server: https://acme-v02.api.letsencrypt.org/directory
-    email: $EMAIL
-    privateKeySecretRef:
-      name: letsencrypt-prod-key
-    solvers:
-    - http01:
-        gatewayHTTPRoute:
-          parentRefs:
-          - name: mattermost-gateway
-            namespace: mattermost
-            kind: Gateway
-EOF
-    kubectl apply -f cluster-issuer.yaml
-
-    # Gateway
-    cat > mattermost-gateway.yaml <<EOF
-apiVersion: gateway.networking.k8s.io/v1
-kind: Gateway
-metadata:
-  name: mattermost-gateway
-  namespace: mattermost
-  annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
-spec:
-  gatewayClassName: azure-alb-external
-  listeners:
-  - name: http-listener
-    protocol: HTTP
-    port: 80
-    allowedRoutes:
-      namespaces:
-        from: Same
-  - name: https-listener
-    protocol: HTTPS
-    port: 443
-    allowedRoutes:
-      namespaces:
-        from: Same
-    tls:
-      mode: Terminate
-      certificateRefs:
-      - name: mattermost-tls-cert
-        kind: Secret
-EOF
-    kubectl apply -f mattermost-gateway.yaml
-
-    # HTTPRoute
-    cat > mattermost-httproute.yaml <<EOF
-apiVersion: gateway.networking.k8s.io/v1
-kind: HTTPRoute
-metadata:
-  name: mattermost-route
-  namespace: mattermost
-spec:
-  parentRefs:
-  - name: mattermost-gateway
-    namespace: mattermost
-  hostnames:
-  - "$DOMAIN"
-  rules:
-  - matches:
-    - path:
-        type: PathPrefix
-        value: /
-    backendRefs:
-    - name: mattermost
-      port: 8065
-    timeouts:
-      request: 600s
-EOF
-    kubectl apply -f mattermost-httproute.yaml
+# Apply secrets from pre-generated YAML
+kubectl apply -f "$YAML_DIR/mattermost-secret-postgres.yaml"
+if [ -f "$YAML_DIR/mattermost-secret-license.yaml" ]; then
+    kubectl apply -f "$YAML_DIR/mattermost-secret-license.yaml"
 fi
 
-# Step 6: Deploy Mattermost with NFS
-echo ""
-echo "Step 6: Deploying Mattermost with NFS storage..."
+print_success "Secrets created"
 
-# Delete existing Mattermost if it exists
-kubectl delete mattermost mattermost -n mattermost --ignore-not-found=true
-echo "Waiting for existing Mattermost to be deleted..."
-sleep 30
+# Create Gateway API resources (HTTP-only initially)
+create_gateway_resources "$YAML_DIR"
+
+# Configure DNS and wait for propagation
+configure_dns_and_wait
+
+# Provision TLS certificate
+provision_tls_certificate "$YAML_DIR" "$TEMPLATES_DIR"
+
+# Deploy Mattermost with NFS
+echo ""
+echo "Deploying Mattermost with NFS storage..."
 
 # Create installation manifest with NFS volume
-cat > mattermost-installation-nfs.yaml <<EOF
+cat > "$YAML_DIR/mattermost-installation-nfs.yaml" <<EOF
 apiVersion: installation.mattermost.com/v1beta1
 kind: Mattermost
 metadata:
   name: mattermost
   namespace: mattermost
 spec:
-  size: 100users
+  size: ${MATTERMOST_SIZE}
+  ingress:
+    enabled: true
+    host: ${DOMAIN}
   database:
     external:
       secret: mattermost-postgres
+  licenseSecret: mattermost-secret-license
   image: mattermost/mattermost-enterprise-edition
   imagePullPolicy: IfNotPresent
   mattermostEnv:
@@ -257,7 +156,9 @@ spec:
     value: "local"
   - name: MM_FILESETTINGS_DIRECTORY
     value: "/mattermost/data"
-  version: 11.2.1
+  - name: MM_SERVICEENVIRONMENT
+    value: "${MM_SERVICEENVIRONMENT}"
+  version: ${MATTERMOST_VERSION}
   # Mount NFS volume
   podExtensions:
     extraVolumes:
@@ -269,42 +170,35 @@ spec:
       mountPath: /mattermost/data
 EOF
 
-kubectl apply -f mattermost-installation-nfs.yaml
+if kubectl get mattermost mattermost -n mattermost &>/dev/null; then
+    echo "Mattermost already exists, updating..."
+    kubectl apply -f "$YAML_DIR/mattermost-installation-nfs.yaml"
+else
+    kubectl apply -f "$YAML_DIR/mattermost-installation-nfs.yaml"
+fi
 
 echo ""
 echo "Waiting for Mattermost to be ready (this may take several minutes)..."
-kubectl -n mattermost wait --for=condition=ready mattermost/mattermost --timeout=600s || true
+kubectl -n mattermost wait --for=condition=ready mattermost/mattermost --timeout=600s || echo "Mattermost deployment taking longer than expected, check status manually"
 
+# Final status
 echo ""
 echo "=========================================="
-echo "NFS Deployment Complete!"
+echo "  NFS Deployment Complete!"
 echo "=========================================="
 echo ""
+echo "Mattermost URL: https://$DOMAIN"
 echo "Storage Type: NFS (Azure Files Premium)"
 echo ""
 echo "PVC Status:"
 kubectl get pvc -n mattermost
-
 echo ""
-echo "Gateway Status:"
-kubectl get gateway mattermost-gateway -n mattermost
-
-echo ""
-echo "Gateway IP:"
-GATEWAY_IP=$(kubectl get gateway mattermost-gateway -n mattermost -o jsonpath='{.status.addresses[0].value}' 2>/dev/null || echo "Not ready yet")
-echo "$GATEWAY_IP"
-
-echo ""
-echo "Mattermost Status:"
-kubectl get mm -n mattermost
-
-echo ""
-echo "Next steps:"
-echo "1. Update DNS: $DOMAIN -> $GATEWAY_IP"
-echo "2. Access Mattermost at https://$DOMAIN"
-echo ""
-echo "To check Mattermost logs:"
-echo "  kubectl logs -n mattermost deployment/mattermost"
+echo "To check deployment status:"
+echo "  make status"
 echo ""
 echo "To verify NFS volume is mounted:"
 echo "  kubectl exec -n mattermost deployment/mattermost -- df -h /mattermost/data"
+echo ""
+echo "To view logs:"
+echo "  make logs-mattermost"
+echo ""

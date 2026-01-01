@@ -7,3 +7,6 @@ yaml/
 
 # License files
 license.mattermost
+
+# Trivy security scan reports
+reports/

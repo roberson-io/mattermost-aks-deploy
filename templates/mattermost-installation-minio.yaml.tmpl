@@ -20,10 +20,15 @@ spec:
   image: mattermost/mattermost-enterprise-edition
   imagePullPolicy: IfNotPresent
   mattermostEnv:
-  - name: MM_FILESETTINGS_AMAZONS3SSE
-    value: "false"
   - name: MM_FILESETTINGS_AMAZONS3SSL
-    value: "false"
+    value: "${MM_FILESETTINGS_AMAZONS3SSL}"
+  - name: MM_FILESETTINGS_AMAZONS3SSE
+    value: "${MM_FILESETTINGS_AMAZONS3SSE}"
+  - name: MM_FILESETTINGS_AMAZONS3TRACE
+    value: "${MM_FILESETTINGS_AMAZONS3TRACE}"
   - name: MM_SERVICEENVIRONMENT
     value: "${MM_SERVICEENVIRONMENT}"
   version: ${MATTERMOST_VERSION}
+  podTemplate:
+    securityContext:
+      fsGroup: 2000
