@@ -23,12 +23,16 @@ make env
 # 4. Edit .env to set your domain and email and modify default settings
 vim .env
 
-# 5. Deploy with MinIO storage
+# 5. Deploy with NFS, MinIO, or S3Proxy for file storage
 # The script will prompt to create a DNS CNAME or A record when the gateway FQDN and IP address are available
-make deploy-minio
+# Options:
+# make deploy-minio
+# make deploy-nfs
+# make deploy-s3proxy
+make deploy-nfs
 ```
 
-The script should be idempotent. If you run into an issue that causes the script to exit with an error that requires manual intervention, you should be able to run `make deploy-minio` again after resolving the issue.
+Each deploy script should be idempotent. If you run into an issue that causes the script to exit with an error that requires manual intervention, you should be able to run `make deploy-nfs`, `make deploy-minio`, or `make deploy-s3proxy` again after resolving the issue. The scripts were NOT designed to switch from one file storage type to another.
 
 ## Prerequisites
 
@@ -37,6 +41,7 @@ The script should be idempotent. If you run into an issue that causes the script
 - Active Azure subscription
 - Domain name with ability to configure DNS
 - `pwgen` for generating secrets if you use `make env`.
+- `trivy` (optional) for running trivy make targets for security checks.
 
 ## Configuration
 
@@ -44,8 +49,6 @@ All configuration is managed via `.env` file:
 
 1. **Create .env**: `make env` copies `example.env` and generates secure 32-character random passwords
 2. **Edit .env**: Update `DOMAIN` and `EMAIL` with your values. Verify that the `LICENSE_FILE` setting is set to a file with a valid Enterprise or Enterprise Advanced License key. Edit any other settings as applicable for your use case.
-
-```
 
 ## Make Targets
 
@@ -76,6 +79,14 @@ All configuration is managed via `.env` file:
 ### Cleanup
 
 - `make clean` - Remove generated YAML files
+
+### Security Scanning (Trivy)
+
+- `make trivy-config` - Scan YAML configurations for security issues
+- `make trivy-images` - Scan container images for vulnerabilities
+- `make trivy-cluster` - Scan live Kubernetes cluster
+- `make trivy-report` - Generate comprehensive security reports in JSON format
+- `make trivy-full` - Run all Trivy security scans
 
 ## Storage Options
 
