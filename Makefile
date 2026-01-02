@@ -55,7 +55,7 @@ yaml: ## Generate all YAML files from templates (requires .env)
 	@./scripts/generate-yaml.sh
 	@echo "YAML files generated in yaml/ directory"
 
-deploy-minio: yaml ## Deploy Mattermost with MinIO storage (creates cluster, PostgreSQL, etc.)
+deploy-minio: clean yaml ## Deploy Mattermost with MinIO storage (creates cluster, PostgreSQL, etc.)
 	@echo "=========================================="
 	@echo "Deploying Mattermost with MinIO Storage"
 	@echo "=========================================="
@@ -68,7 +68,7 @@ deploy-minio: yaml ## Deploy Mattermost with MinIO storage (creates cluster, Pos
 	@echo ""
 	@echo "Deployment complete!"
 
-deploy-nfs: ## Deploy Mattermost with NFS storage (requires cluster to exist)
+deploy-nfs: clean yaml ## Deploy Mattermost with NFS storage (requires cluster to exist)
 	@echo "=========================================="
 	@echo "Deploying Mattermost with NFS Storage"
 	@echo "=========================================="
@@ -77,7 +77,7 @@ deploy-nfs: ## Deploy Mattermost with NFS storage (requires cluster to exist)
 	@echo ""
 	@echo "Deployment complete!"
 
-deploy-s3proxy: ## Deploy Mattermost with s3proxy + Azure Blob storage (requires cluster to exist)
+deploy-s3proxy: clean yaml ## Deploy Mattermost with s3proxy + Azure Blob storage (requires cluster to exist)
 	@echo "=========================================="
 	@echo "Deploying Mattermost with s3proxy Storage"
 	@echo "=========================================="

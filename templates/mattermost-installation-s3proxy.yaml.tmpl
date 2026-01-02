@@ -5,6 +5,7 @@ metadata:
   namespace: mattermost
 spec:
   size: ${MATTERMOST_SIZE}
+  replicas: ${MATTERMOST_REPLICAS}
   ingress:
     enabled: true
     host: ${DOMAIN}
@@ -28,6 +29,11 @@ spec:
     value: "${MM_FILESETTINGS_AMAZONS3TRACE}"
   - name: MM_SERVICEENVIRONMENT
     value: "${MM_SERVICEENVIRONMENT}"
+  - name: MM_SQLSETTINGS_DATASOURCEREPLICAS
+    valueFrom:
+      secretKeyRef:
+        name: mattermost-postgres
+        key: DB_REPLICAS_CONNECTION_STRING
   version: ${MATTERMOST_VERSION}
   podTemplate:
     securityContext:

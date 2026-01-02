@@ -92,6 +92,16 @@ export POSTGRES_ADMIN_USER
 export POSTGRES_PASSWORD
 export CONNECTION_STRING="postgres://${POSTGRES_ADMIN_USER}:${POSTGRES_PASSWORD}@${POSTGRES_SERVER}.postgres.database.azure.com:5432/${POSTGRES_DB}?sslmode=require&connect_timeout=10"
 export CONNECTION_STRING_BASE64=$(echo -n "$CONNECTION_STRING" | base64)
+
+# Add read replica configuration if enabled
+if [ "$POSTGRES_CREATE_REPLICA" = "true" ]; then
+    export READ_REPLICA_CONNECTION_STRING="postgres://${POSTGRES_ADMIN_USER}:${POSTGRES_PASSWORD}@${POSTGRES_REPLICA_NAME}.postgres.database.azure.com:5432/${POSTGRES_DB}?sslmode=require&connect_timeout=10"
+    export READ_REPLICA_CONNECTION_STRING_BASE64=$(echo -n "$READ_REPLICA_CONNECTION_STRING" | base64)
+else
+    # If no replica, use main connection string for reads (fallback)
+    export READ_REPLICA_CONNECTION_STRING_BASE64="$CONNECTION_STRING_BASE64"
+fi
+
 envsubst < "$TEMPLATES_DIR/mattermost-secret-postgres.yaml.tmpl" > "$YAML_DIR/mattermost-secret-postgres.yaml"
 
 # MinIO secret (uses MINIO_ACCESS_KEY_BASE64 and MINIO_SECRET_KEY_BASE64 from above)
@@ -115,6 +125,7 @@ echo "Generating Mattermost installation manifests..."
 export DOMAIN
 export MATTERMOST_VERSION
 export MATTERMOST_SIZE
+export MATTERMOST_REPLICAS
 export MM_SERVICEENVIRONMENT
 export MM_FILESETTINGS_AMAZONS3SSL
 export MM_FILESETTINGS_AMAZONS3SSE

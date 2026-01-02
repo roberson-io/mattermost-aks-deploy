@@ -75,8 +75,8 @@ create_aks_cluster() {
     echo "  Name: $CLUSTER_NAME"
     echo "  Resource Group: $RESOURCE_GROUP"
     echo "  Location: $LOCATION"
-    echo "  Node Count: ${NODE_COUNT:-2}"
-    echo "  Node VM Size: ${NODE_VM_SIZE:-Standard_D4s_v4}"
+    echo "  Node Count: $NODE_COUNT"
+    echo "  Node VM Size: $NODE_VM_SIZE"
     echo ""
 
     if az aks show --resource-group "$RESOURCE_GROUP" --name "$CLUSTER_NAME" &>/dev/null; then
@@ -86,8 +86,8 @@ create_aks_cluster() {
             --resource-group "$RESOURCE_GROUP" \
             --name "$CLUSTER_NAME" \
             --enable-managed-identity \
-            --node-count "${NODE_COUNT:-2}" \
-            --node-vm-size "${NODE_VM_SIZE:-Standard_D4s_v4}" \
+            --node-count "$NODE_COUNT" \
+            --node-vm-size "$NODE_VM_SIZE" \
             --generate-ssh-keys \
             --network-plugin azure \
             --network-policy calico \
@@ -110,7 +110,7 @@ create_postgresql() {
     echo ""
     echo "Creating PostgreSQL Flexible Server..."
     echo "  Server: $POSTGRES_SERVER"
-    echo "  Version: ${POSTGRES_VERSION:-18}"
+    echo "  Version: $POSTGRES_VERSION"
     echo ""
 
     if az postgres flexible-server show --resource-group "$RESOURCE_GROUP" --name "$POSTGRES_SERVER" &>/dev/null; then
@@ -120,13 +120,13 @@ create_postgresql() {
             --resource-group "$RESOURCE_GROUP" \
             --name "$POSTGRES_SERVER" \
             --location "$LOCATION" \
-            --admin-user "${POSTGRES_ADMIN_USER:-mmuser}" \
+            --admin-user "$POSTGRES_ADMIN_USER" \
             --admin-password "$POSTGRES_PASSWORD" \
-            --sku-name "${POSTGRES_SKU:-Standard_E2ds_v4}" \
-            --tier "${POSTGRES_TIER:-MemoryOptimized}" \
-            --storage-size "${POSTGRES_STORAGE_SIZE:-128}" \
-            --version "${POSTGRES_VERSION:-18}" \
-            --public-access "${POSTGRES_PUBLIC_ACCESS:-0.0.0.0}" \
+            --sku-name "$POSTGRES_SKU" \
+            --tier "$POSTGRES_TIER" \
+            --storage-size "$POSTGRES_STORAGE_SIZE" \
+            --version "$POSTGRES_VERSION" \
+            --public-access "$POSTGRES_PUBLIC_ACCESS" \
             --yes
 
         print_success "PostgreSQL server created"
@@ -138,6 +138,36 @@ create_postgresql() {
             --database-name "$POSTGRES_DB"
 
         print_success "Database created"
+    fi
+
+    # Create read replica if configured
+    if [ "$POSTGRES_CREATE_REPLICA" = "true" ]; then
+        echo ""
+        echo "Creating PostgreSQL read replica..."
+        echo "  Replica: $POSTGRES_REPLICA_NAME"
+
+        if az postgres flexible-server show --resource-group "$RESOURCE_GROUP" --name "$POSTGRES_REPLICA_NAME" &>/dev/null; then
+            print_warning "PostgreSQL read replica already exists, skipping creation"
+        else
+            az postgres flexible-server replica create \
+                --resource-group "$RESOURCE_GROUP" \
+                --replica-name "$POSTGRES_REPLICA_NAME" \
+                --source-server "$POSTGRES_SERVER" \
+                --location "$LOCATION"
+
+            # Add firewall rule to replica (not copied automatically from primary)
+            echo "  Configuring firewall rules for replica..."
+            az postgres flexible-server firewall-rule create \
+                --resource-group "$RESOURCE_GROUP" \
+                --name "$POSTGRES_REPLICA_NAME" \
+                --rule-name AllowAllAzureServicesAndResourcesWithinAzureIps \
+                --start-ip-address "$POSTGRES_PUBLIC_ACCESS" \
+                --end-ip-address "$POSTGRES_PUBLIC_ACCESS" \
+                --output none
+
+            print_success "PostgreSQL read replica created and configured"
+            echo "      Reader endpoint: $POSTGRES_REPLICA_NAME.postgres.database.azure.com"
+        fi
     fi
 }
 
@@ -225,8 +255,8 @@ create_alb_infrastructure() {
 
     # Set ALB resource names
     local ALB_NAME="${CLUSTER_NAME}-alb"
-    local ALB_FRONTEND_NAME="frontend-mattermost"
-    local ALB_ASSOCIATION_NAME="association-mattermost"
+    local ALB_FRONTEND_NAME="$ALB_FRONTEND_NAME"
+    local ALB_ASSOCIATION_NAME="$ALB_ASSOCIATION_NAME"
 
     # Check if ALB already exists
     if az network alb show --resource-group "$RESOURCE_GROUP" --name "$ALB_NAME" &>/dev/null; then
@@ -360,26 +390,55 @@ create_gateway_resources() {
 # Configure DNS and wait for propagation
 configure_dns_and_wait() {
     echo ""
-    echo "Waiting for Gateway to get external IP..."
+    echo "Waiting for Gateway to get external hostname..."
     GATEWAY_FQDN=""
     for i in {1..30}; do
         GATEWAY_FQDN=$(kubectl get gateway mattermost-gateway -n mattermost -o jsonpath='{.status.addresses[0].value}' 2>/dev/null || true)
         if [ -n "$GATEWAY_FQDN" ]; then
             break
         fi
-        echo "Waiting for Gateway IP... ($i/30)"
+        echo "Waiting for Gateway hostname... ($i/30)"
         sleep 10
     done
 
     if [ -z "$GATEWAY_FQDN" ]; then
-        print_error "Gateway did not get an external IP within 5 minutes"
+        print_error "Gateway did not get a hostname within 5 minutes"
         exit 1
     fi
 
-    # Resolve FQDN to IP if needed
-    GATEWAY_IP=$(dig +short "$GATEWAY_FQDN" | head -1)
+    # Wait for Gateway hostname to resolve to a responsive IP
+    echo "Validating Gateway hostname resolves to responsive IP..."
+    GATEWAY_IP=""
+    for i in {1..30}; do
+        GATEWAY_IP=$(dig +short "$GATEWAY_FQDN" @"$DNS_SERVER" | grep -E '^[0-9.]+$' | head -1)
+
+        if [ -n "$GATEWAY_IP" ]; then
+            # Test if IP responds to HTTP requests with Azure ALB header
+            if curl -s -m 5 -H "Host: $DOMAIN" "http://$GATEWAY_IP/" | head -1 | grep -q "HTTP" 2>/dev/null || \
+               curl -s -m 5 -I -H "Host: $DOMAIN" "http://$GATEWAY_IP/" 2>/dev/null | grep -q "Microsoft-Azure-Application-LB"; then
+                print_success "Gateway hostname $GATEWAY_FQDN resolves to responsive IP: $GATEWAY_IP"
+                break
+            else
+                echo "Gateway IP $GATEWAY_IP not yet responsive, waiting... ($i/30)"
+            fi
+        else
+            echo "Gateway hostname not yet resolvable via DNS, waiting... ($i/30)"
+        fi
+
+        GATEWAY_IP=""
+        sleep 10
+    done
+
     if [ -z "$GATEWAY_IP" ]; then
-        GATEWAY_IP="$GATEWAY_FQDN"
+        print_warning "Gateway hostname did not resolve to a responsive IP within 5 minutes"
+        echo "Hostname: $GATEWAY_FQDN"
+        echo "This may indicate Azure DNS propagation delays."
+        read -p "Press ENTER to continue anyway (or Ctrl+C to cancel)..."
+        # Fallback: use whatever IP dig returns
+        GATEWAY_IP=$(dig +short "$GATEWAY_FQDN" @"$DNS_SERVER" | grep -E '^[0-9.]+$' | head -1)
+        if [ -z "$GATEWAY_IP" ]; then
+            GATEWAY_IP="$GATEWAY_FQDN"
+        fi
     fi
 
     echo ""
@@ -412,22 +471,37 @@ configure_dns_and_wait() {
         echo "Continuing without DNS verification..."
         read -p "Press ENTER after you have updated DNS (or Ctrl+C to cancel)..."
     else
-        # DNS Verification Loop
-        echo "Checking DNS propagation (using DNS server: ${DNS_SERVER:-8.8.8.8})..."
+        # DNS Verification Loop - Handle both CNAME and A records
+        echo "Checking DNS propagation (using DNS server: $DNS_SERVER)..."
         DNS_READY=false
         for i in {1..30}; do
-            RESOLVED_IP=$(dig +short "$DOMAIN" @${DNS_SERVER:-8.8.8.8} | grep -E '^[0-9.]+$' | head -1)
+            # Check for CNAME record first
+            RESOLVED_CNAME=$(dig +short "$DOMAIN" CNAME @"$DNS_SERVER" | sed 's/\.$//')
 
-            if [ -n "$RESOLVED_IP" ] && [ "$RESOLVED_IP" = "$GATEWAY_IP" ]; then
-                print_success "DNS propagated successfully! $DOMAIN resolves to $GATEWAY_IP"
-                DNS_READY=true
-                break
-            fi
-
-            if [ -n "$RESOLVED_IP" ]; then
-                echo "DNS not yet propagated: $DOMAIN -> $RESOLVED_IP (expected $GATEWAY_IP) - attempt $i/30"
+            if [ -n "$RESOLVED_CNAME" ]; then
+                # CNAME exists - verify it points to Gateway hostname
+                GATEWAY_FQDN_CLEAN=$(echo "$GATEWAY_FQDN" | sed 's/\.$//')
+                if [ "$RESOLVED_CNAME" = "$GATEWAY_FQDN_CLEAN" ]; then
+                    print_success "DNS configured correctly! $DOMAIN -> $RESOLVED_CNAME (CNAME)"
+                    DNS_READY=true
+                    break
+                else
+                    echo "DNS CNAME mismatch: $DOMAIN -> $RESOLVED_CNAME (expected $GATEWAY_FQDN_CLEAN) - attempt $i/30"
+                fi
             else
-                echo "DNS not yet configured: $DOMAIN has no DNS record - attempt $i/30"
+                # No CNAME - check for A record
+                RESOLVED_IP=$(dig +short "$DOMAIN" @"$DNS_SERVER" | grep -E '^[0-9.]+$' | head -1)
+
+                if [ -n "$RESOLVED_IP" ]; then
+                    # A record exists - verify it resolves to something (don't require exact IP match)
+                    # The Gateway IP can change, so we just verify DNS is configured
+                    print_success "DNS configured! $DOMAIN resolves to $RESOLVED_IP (A record)"
+                    echo "Note: For CNAME (recommended), configure: $DOMAIN -> $GATEWAY_FQDN"
+                    DNS_READY=true
+                    break
+                else
+                    echo "DNS not yet configured: $DOMAIN has no DNS record - attempt $i/30"
+                fi
             fi
 
             sleep 10
