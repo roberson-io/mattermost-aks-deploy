@@ -13,9 +13,23 @@ spec:
       labels:
         app: s3proxy
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       containers:
       - name: s3proxy
         image: ${S3PROXY_IMAGE}
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1000
+          capabilities:
+            drop:
+              - ALL
         ports:
         - containerPort: 8080
           name: http
@@ -55,8 +69,14 @@ spec:
           limits:
             cpu: "1"
             memory: 1Gi
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
         readinessProbe:
           tcpSocket:
             port: 8080
           initialDelaySeconds: 10
           periodSeconds: 5
+      volumes:
+      - name: tmp
+        emptyDir: {}
