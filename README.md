@@ -11,6 +11,7 @@ Automated deployment scripts for deploying a proof-of-concept instance of Matter
 
 This is not a complete list, but other production considerations beyond the scope of these scripts:
 * [Calls self-hosted deployment](https://docs.mattermost.com/administration-guide/configure/calls-deployment.html)
+* [Enterprise search](https://docs.mattermost.com/administration-guide/scale/enterprise-search.html)
 * [Deploy Prometheus and Grafana for performance monitoring](https://docs.mattermost.com/administration-guide/scale/deploy-prometheus-grafana-for-performance-monitoring.html)
 * [High availability cluster-based deployment](https://docs.mattermost.com/administration-guide/scale/high-availability-cluster-based-deployment.html)
 
