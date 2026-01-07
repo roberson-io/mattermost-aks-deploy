@@ -1,13 +1,18 @@
 # Mattermost AKS Automated Deployment
 
-Automated deployment scripts for running Mattermost on Azure Kubernetes Service (AKS) with modern infrastructure:
+Automated deployment scripts for deploying a proof-of-concept instance of Mattermost on Azure Kubernetes Service (AKS) with:
 
 - **Azure Application Gateway for Containers** (Gateway API)
 - **cert-manager** for automated TLS certificates
 - **PostgreSQL Flexible Server** for database
 - **Multiple storage options**: MinIO, NFS, or s3proxy
 
-**Note:** This is for proof-of-concept deployments of Mattermost with Enterprise or Enterprise Advanced license keys. For production deployments, please review [Available reference architectures](https://docs.mattermost.com/administration-guide/scale/scaling-for-enterprise.html#available-reference-architectures) in the Mattermost documentation to ensure you are scaling your deployment appropriately for your use case. Consult with your organization's security team to verify that your deployment configuration is sufficiently hardened for your use case.
+**Note:** This is for proof-of-concept deployments of Mattermost with Enterprise or Enterprise Advanced license keys in AKS. For production deployments, please review [Available reference architectures](https://docs.mattermost.com/administration-guide/scale/scaling-for-enterprise.html#available-reference-architectures) in the Mattermost documentation to ensure you are scaling your deployment appropriately for your use case. Consult with your organization's security team to verify that your deployment configuration is sufficiently hardened for your use case.
+
+This is not a complete list, but other production considerations beyond the scope of these scripts:
+* [Calls self-hosted deployment](https://docs.mattermost.com/administration-guide/configure/calls-deployment.html)
+* [Deploy Prometheus and Grafana for performance monitoring](https://docs.mattermost.com/administration-guide/scale/deploy-prometheus-grafana-for-performance-monitoring.html)
+* [High availability cluster-based deployment](https://docs.mattermost.com/administration-guide/scale/high-availability-cluster-based-deployment.html)
 
 ## Quick Start
 
@@ -169,7 +174,3 @@ make logs-s3proxy
 kubectl describe deployment s3proxy -n s3proxy
 az storage blob list --account-name <name> --container-name mattermost
 ```
-
-## License
-
-This project is provided as-is for deploying Mattermost on Azure Kubernetes Service. Mattermost itself is licensed separately.
