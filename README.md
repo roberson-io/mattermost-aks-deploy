@@ -101,9 +101,13 @@ All configuration is managed via `.env` file:
 make deploy-minio
 ```
 
+- As of October 2025, MinIO stopped distributing community edition binaries or Docker images.
+- As of December 2025, MinIO community edition is in maintenance mode
+- By default, this project uses the [free MinIO Chainguard container](https://www.chainguard.dev/unchained/secure-and-free-minio-chainguard-containers)
+- Only the `latest` and `latest-dev` tags of the MinIO Chainguard image are available without a Chainguard account
 - Native S3 API implementation
 - Distributed storage with multiple servers
-- Uses Azure Blob NFS Premium storage (200Gi)
+- Uses Azure Blob NFS Premium storage
 
 ### NFS
 
@@ -123,6 +127,8 @@ make deploy-s3proxy
 ```
 
 - Translates S3 API to Azure Blob Storage
+- Has [limitations](https://github.com/gaul/s3proxy?tab=readme-ov-file#limitations) such as no support for object server-side encryption
+- Maintained by [Andrew Gaul](http://gaul.org/)
 - Not tested on large deployments
 
 ## DNS and TLS Automation
